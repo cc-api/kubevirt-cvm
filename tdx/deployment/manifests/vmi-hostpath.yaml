@@ -1,0 +1,46 @@
+---
+apiVersion: kubevirt.io/v1
+kind: VirtualMachineInstance
+metadata:
+  labels:
+    special: vmi-ubuntu-td
+  name: vmi-ubuntu-td
+spec:
+  domain:
+    launchSecurity:
+      tdx:
+        QGS: vsock:2:4050
+    clock:
+      timer:
+        hpet:
+          present: false
+    machine:
+      type: q35
+    cpu:
+      model: host-passthrough
+      sockets: 1
+      cores: 4
+    features:
+      acpi: {}
+      apic: {}
+    devices:
+      autoattachVSOCK: true
+      autoattachGraphicsDevice: false
+      disks:
+      - disk:
+          bus: virtio
+        name: host-disk
+    firmware:
+      bootloader:
+        efi:
+          secureBoot: false
+    resources:
+      requests:
+        memory: 16Gi
+  terminationGracePeriodSeconds: 10
+  volumes:
+  - hostDisk:
+      capacity: 10Gi
+      path: guest-image.raw
+      type: DiskOrCreate
+    name: host-disk

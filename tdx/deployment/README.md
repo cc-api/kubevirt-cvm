@@ -19,14 +19,16 @@ It supports to deploy on Ubuntu 24.04 and Ubuntu 23.10. The follows will use Ubu
 ## Install KubeVirt
 
 ```
-kubectl create -f _out/manifests/release/kubevirt-operator.yaml
-kubectl create -f _out/manifests/release/kubevirt-cr.yaml
+kubectl create -f ./manifests/kubevirt-operator.yaml
+kubectl create -f ./manifests/kubevirt-cr.yaml
 ```
 
 - Check the components if the installation is successful
 ```
 kubectl get all -n kubevirt
 ```
+
+Check the kubevirt components `virt-api`, `virt-controller`, `virt-handler` if are running.
 
 ## Prepare CVM image
 
@@ -41,6 +43,7 @@ kubectl get all -n kubevirt
 
 Update image path in VMI yaml file [vmi-hostpath.yaml](./manifests/vmi-hostpath.yaml). Set it to the path of your guest image.
 
+
 ```
   volumes:
   - hostDisk:
@@ -50,10 +53,12 @@ Update image path in VMI yaml file [vmi-hostpath.yaml](./manifests/vmi-hostpath.
     name: host-disk
 ```
 
+The default TDVM configuration is 4vCPUs/16GMemory, and it can also be configured in the yaml file.
+
 Create VMI with below command.
 
 ```bash
-kubectl create -f vmi-ubuntu-td.yaml
+kubectl create -f ./manifests/vmi-hostpath.yaml
 ```
 
 After deployment, the status of VMI should be `Running`.
