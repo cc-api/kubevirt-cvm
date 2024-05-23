@@ -16,6 +16,6 @@ to protect confidentiality and integrity for workloads.
 
 The project provides content as below.
 
-- Deployment guide for running CVM with KubeVirt.
+- [Deployment guide](./tdx/deployment/README.md) for running Intel TDX guest (TD) with KubeVirt.
 - Additional [patches](./tdx/patches/) to run Intel TDX guest. See more details in the patches.
 - [CC Trusted API](https://github.com/cc-api/cc-trusted-api) usage example to collect evidence.
