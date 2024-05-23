@@ -6,8 +6,8 @@ It supports to deploy on Ubuntu 24.04 and Ubuntu 23.10. The follows will use Ubu
 
 ## Prerequisite
 
-1. Make sure you have [Supported Hardware](https://github.com/canonical/tdx?tab=readme-ov-file#3-supported-hardware).
-2. Setup TDX host following [guide](https://github.com/canonical/tdx?tab=readme-ov-file#4-setup-host-os).
+1. Make sure you have [Supported Hardware](https://github.com/canonical/tdx/tree/mantic-23.10?tab=readme-ov-file#supported-hardware).
+2. Setup TDX host following [guide](https://github.com/canonical/tdx/tree/mantic-23.10?tab=readme-ov-file#4-setup-tdx-host).
 3. Install Kubernetes on the host following [official guide](https://kubernetes.io/docs/setup/). Or you can use below commands to setup an experimental environment quickly.
     ```
     sudo apt-get install -y kubelet kubeadm kubectl
@@ -30,11 +30,11 @@ kubectl get all -n kubevirt
 
 ## Prepare CVM image
 
-1. Follow [guide](https://github.com/canonical/tdx?tab=readme-ov-file#5-create-td-image) to create a TDX guest image.
+1. Follow [guide](https://github.com/canonical/tdx/tree/mantic-23.10?tab=readme-ov-file#5-setup-td-guest) to create a TDX guest image.
 2. Convert the image to raw format. The image will be used in the next step.
 
     ```
-    qemu-img convert -f qcow2 -O raw tdx-guest-ubuntu-24.04-generic.qcow2 tdx-guest-ubuntu-24.04-generic.img
+    qemu-img convert -f qcow2 -O raw tdx-guest-ubuntu-23.10-generic.qcow2 tdx-guest-ubuntu-23.10-generic.img
     ```
 
 ## Boot TD
