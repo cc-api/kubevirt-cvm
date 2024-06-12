@@ -1,0 +1,170 @@
+From bc56a25d87a47bd2feb2fb52f27059b619caa00e Mon Sep 17 00:00:00 2001
+From: LeiZhou-97 <lei.zhou@intel.com>
+Date: Mon, 28 Aug 2023 14:38:32 +0800
+Subject: [PATCH 07/18] Label the nodes capable of running TDX guests
+
+Signed-off-by: LeiZhou-97 <lei.zhou@intel.com>
+---
+ pkg/virt-handler/node-labeller/cpu_plugin.go   |  2 +-
+ .../node-labeller/cpu_plugin_test.go           | 18 ++++++++++++++++++
+ pkg/virt-handler/node-labeller/model.go        |  4 ++++
+ .../node-labeller/node_labeller.go             |  6 ++++++
+ .../node-labeller/node_labeller_test.go        |  6 ++++++
+ .../testdata/virsh_domcapabilities.xml         |  1 +
+ .../virsh_domcapabilities_nothing_usable.xml   |  3 +++
+ staging/src/kubevirt.io/api/core/v1/types.go   |  3 +++
+ 8 files changed, 42 insertions(+), 1 deletion(-)
+
+diff --git a/pkg/virt-handler/node-labeller/cpu_plugin.go b/pkg/virt-handler/node-labeller/cpu_plugin.go
+index 819f36cbe7b7..104dca0dc864 100644
+--- a/pkg/virt-handler/node-labeller/cpu_plugin.go
++++ b/pkg/virt-handler/node-labeller/cpu_plugin.go
+@@ -121,7 +121,7 @@ func (n *NodeLabeller) loadDomCapabilities() error {
+ 
+ 	n.hostCapabilities.items = usableModels
+ 	n.SEV = hostDomCapabilities.SEV
+-
++	n.TDX = hostDomCapabilities.TDX
+ 	return nil
+ }
+ 
+diff --git a/pkg/virt-handler/node-labeller/cpu_plugin_test.go b/pkg/virt-handler/node-labeller/cpu_plugin_test.go
+index 423295bb5257..541f691f860b 100644
+--- a/pkg/virt-handler/node-labeller/cpu_plugin_test.go
++++ b/pkg/virt-handler/node-labeller/cpu_plugin_test.go
+@@ -205,6 +205,24 @@ var _ = Describe("Node-labeller config", func() {
+ 		)
+ 	})
+ 
++	Context("return correct TDX capabilities", func() {
++		It("when TDX is supported", func() {
++			nlController.domCapabilitiesFileName = "virsh_domcapabilities.xml"
++			err := nlController.loadDomCapabilities()
++			Expect(err).ToNot(HaveOccurred())
++
++			Expect(nlController.TDX.Supported).To(Equal("yes"))
++		})
++
++		It("when TDX is not supported", func() {
++			nlController.domCapabilitiesFileName = "virsh_domcapabilities_nothing_usable.xml"
++			err := nlController.loadDomCapabilities()
++			Expect(err).ToNot(HaveOccurred())
++
++			Expect(nlController.TDX.Supported).To(Equal("no"))
++		})
++	})
++
+ 	It("Make sure proper labels are removed on removeLabellerLabels()", func() {
+ 		node := &k8sv1.Node{
+ 			ObjectMeta: metav1.ObjectMeta{
+diff --git a/pkg/virt-handler/node-labeller/model.go b/pkg/virt-handler/node-labeller/model.go
+index 1d73490aa703..c1f3b893a103 100644
+--- a/pkg/virt-handler/node-labeller/model.go
++++ b/pkg/virt-handler/node-labeller/model.go
+@@ -40,6 +40,7 @@ type cpuInfo struct {
+ type HostDomCapabilities struct {
+ 	CPU CPU              `xml:"cpu"`
+ 	SEV SEVConfiguration `xml:"features>sev"`
++	TDX TDXConfiguration `xml:"features>tdx"`
+ }
+ 
+ // CPU represents slice of cpu modes
+@@ -99,6 +100,9 @@ type SEVConfiguration struct {
+ 	SupportedES     string `xml:"-"`
+ }
+ 
++type TDXConfiguration struct {
++	Supported string `xml:"supported,attr"`
++}
+ type KSMConfiguration struct {
+ 	Available     bool
+ 	SysfsFilePath string
+diff --git a/pkg/virt-handler/node-labeller/node_labeller.go b/pkg/virt-handler/node-labeller/node_labeller.go
+index f5eba812e49b..6abf6715b1aa 100644
+--- a/pkg/virt-handler/node-labeller/node_labeller.go
++++ b/pkg/virt-handler/node-labeller/node_labeller.go
+@@ -64,6 +64,7 @@ var nodeLabellerLabels = []string{
+ 	kubevirtv1.RealtimeLabel,
+ 	kubevirtv1.SEVLabel,
+ 	kubevirtv1.SEVESLabel,
++	kubevirtv1.TDXLabel,
+ 	kubevirtv1.HostModelCPULabel,
+ 	kubevirtv1.HostModelRequiredFeaturesLabel,
+ 	kubevirtv1.NodeHostModelIsObsoleteLabel,
+@@ -89,6 +90,7 @@ type NodeLabeller struct {
+ 	capabilities            *api.Capabilities
+ 	hostCPUModel            hostCPUModel
+ 	SEV                     SEVConfiguration
++	TDX                     TDXConfiguration
+ 	KSM                     KSMConfiguration
+ }
+ 
+@@ -331,6 +333,10 @@ func (n *NodeLabeller) prepareLabels(node *v1.Node, cpuModels []string, cpuFeatu
+ 		newLabels[kubevirtv1.SEVESLabel] = ""
+ 	}
+ 
++	if n.TDX.Supported == "yes" {
++		newLabels[kubevirtv1.TDXLabel] = ""
++	}
++
+ 	if n.KSM.Enabled {
+ 		newLabels[kubevirtv1.KSMEnabledLabel] = "true"
+ 	}
+diff --git a/pkg/virt-handler/node-labeller/node_labeller_test.go b/pkg/virt-handler/node-labeller/node_labeller_test.go
+index f472dd3489ef..0ea642d1e429 100644
+--- a/pkg/virt-handler/node-labeller/node_labeller_test.go
++++ b/pkg/virt-handler/node-labeller/node_labeller_test.go
+@@ -189,6 +189,12 @@ var _ = Describe("Node-labeller ", func() {
+ 		Expect(res).To(BeTrue())
+ 	})
+ 
++	It("should add TDX label", func() {
++		expectNodePatch(kubevirtv1.TDXLabel)
++		res := nlController.execute()
++		Expect(res).To(BeTrue())
++	})
++
+ 	It("should add usable cpu model labels for the host cpu model", func() {
+ 		expectNodePatch(
+ 			kubevirtv1.HostModelCPULabel+"Skylake-Client-IBRS",
+diff --git a/pkg/virt-handler/node-labeller/testdata/virsh_domcapabilities.xml b/pkg/virt-handler/node-labeller/testdata/virsh_domcapabilities.xml
+index c48a5d495ba1..cc9936f0ee80 100644
+--- a/pkg/virt-handler/node-labeller/testdata/virsh_domcapabilities.xml
++++ b/pkg/virt-handler/node-labeller/testdata/virsh_domcapabilities.xml
+@@ -27,5 +27,6 @@
+           <maxGuests>15</maxGuests>
+           <maxESGuests>15</maxESGuests>
+         </sev>
++        <tdx supported='yes'/>
+     </features>
+ </domainCapabilities>
+diff --git a/pkg/virt-handler/node-labeller/testdata/virsh_domcapabilities_nothing_usable.xml b/pkg/virt-handler/node-labeller/testdata/virsh_domcapabilities_nothing_usable.xml
+index 2c8dfc458aac..afaa80afec51 100644
+--- a/pkg/virt-handler/node-labeller/testdata/virsh_domcapabilities_nothing_usable.xml
++++ b/pkg/virt-handler/node-labeller/testdata/virsh_domcapabilities_nothing_usable.xml
+@@ -18,4 +18,7 @@
+             <model usable='no'>Haswell</model>
+         </mode>
+     </cpu>
++    <features>
++        <tdx supported='no'/>
++    </features>
+ </domainCapabilities>
+\ No newline at end of file
+diff --git a/staging/src/kubevirt.io/api/core/v1/types.go b/staging/src/kubevirt.io/api/core/v1/types.go
+index a7d136fdd408..bcf94c4ba442 100644
+--- a/staging/src/kubevirt.io/api/core/v1/types.go
++++ b/staging/src/kubevirt.io/api/core/v1/types.go
+@@ -923,6 +923,9 @@ const (
+ 	// SEVESLabel marks the node as capable of running workloads with SEV-ES
+ 	SEVESLabel string = "kubevirt.io/sev-es"
+ 
++	// TDXLabel marks the node as capable of running workloads with Intel TDX
++	TDXLabel string = "kubevirt.io/tdx"
++
+ 	// KSMEnabledLabel marks the node as KSM enabled
+ 	KSMEnabledLabel string = "kubevirt.io/ksm-enabled"
+ 
+-- 
+2.45.0
+

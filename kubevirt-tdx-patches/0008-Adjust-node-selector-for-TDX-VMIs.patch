@@ -1,0 +1,65 @@
+From 943df15afa68a16976f6112e0128a5fbed733999 Mon Sep 17 00:00:00 2001
+From: LeiZhou-97 <lei.zhou@intel.com>
+Date: Mon, 28 Aug 2023 14:56:27 +0800
+Subject: [PATCH 08/18] Adjust node selector for TDX VMIs
+
+Use proper label so the VMI gets scheduled on a TDX-capable node.
+
+Signed-off-by: LeiZhou-97 <lei.zhou@intel.com>
+---
+ .../mutating-webhook/mutators/vmi-mutator.go  |  5 ++++
+ .../mutators/vmi-mutator_test.go              | 24 +++++++++++++++++++
+ 2 files changed, 29 insertions(+)
+
+diff --git a/pkg/virt-api/webhooks/mutating-webhook/mutators/vmi-mutator.go b/pkg/virt-api/webhooks/mutating-webhook/mutators/vmi-mutator.go
+index 953b8c3b9fae..0bba516cacee 100644
+--- a/pkg/virt-api/webhooks/mutating-webhook/mutators/vmi-mutator.go
++++ b/pkg/virt-api/webhooks/mutating-webhook/mutators/vmi-mutator.go
+@@ -97,6 +97,11 @@ func (mutator *VMIsMutator) Mutate(ar *admissionv1.AdmissionReview) *admissionv1
+ 			addNodeSelector(newVMI, v1.SEVESLabel)
+ 		}
+ 
++		if util.IsTDXVMI(newVMI) {
++			log.Log.V(4).Info("Add TDX node label selector")
++			addNodeSelector(newVMI, v1.TDXLabel)
++		}
++
+ 		// Add foreground finalizer
+ 		newVMI.Finalizers = append(newVMI.Finalizers, v1.VirtualMachineInstanceFinalizer)
+ 
+diff --git a/pkg/virt-api/webhooks/mutating-webhook/mutators/vmi-mutator_test.go b/pkg/virt-api/webhooks/mutating-webhook/mutators/vmi-mutator_test.go
+index ffde619fe62a..4984989648b9 100644
+--- a/pkg/virt-api/webhooks/mutating-webhook/mutators/vmi-mutator_test.go
++++ b/pkg/virt-api/webhooks/mutating-webhook/mutators/vmi-mutator_test.go
+@@ -1153,4 +1153,28 @@ var _ = Describe("VirtualMachineInstance Mutator", func() {
+ 				},
+ 			}),
+ 	)
++
++	DescribeTable("When scheduling TDX workloads",
++		func(nodeSelectorBefore map[string]string,
++			nodeSelectorAfter map[string]string,
++			launchSec *v1.LaunchSecurity) {
++			vmi.Spec.NodeSelector = nodeSelectorBefore
++			vmi.Spec.Domain.LaunchSecurity = launchSec
++			_, vmiSpec, _ := getMetaSpecStatusFromAdmit(rt.GOARCH)
++			Expect(vmiSpec.NodeSelector).NotTo(BeNil())
++			Expect(vmiSpec.NodeSelector).To(BeEquivalentTo(nodeSelectorAfter))
++		},
++		Entry("It should add TDX node label selector with TDX workload",
++			map[string]string{},
++			map[string]string{v1.TDXLabel: ""},
++			&v1.LaunchSecurity{TDX: &v1.TDX{}}),
++		Entry("It should not add TDX node label selector when no TDX workload",
++			map[string]string{v1.NodeSchedulable: "true"},
++			map[string]string{v1.NodeSchedulable: "true"},
++			&v1.LaunchSecurity{}),
++		Entry("It should not overwrite existing node label selectors with TDX workload",
++			map[string]string{v1.NodeSchedulable: "true"},
++			map[string]string{v1.NodeSchedulable: "true", v1.TDXLabel: ""},
++			&v1.LaunchSecurity{TDX: &v1.TDX{}}),
++	)
+ })
+-- 
+2.45.0
+

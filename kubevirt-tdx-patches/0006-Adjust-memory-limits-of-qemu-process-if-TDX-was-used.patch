@@ -1,0 +1,55 @@
+From 81c23b3a36987e3386c78a3fa0a92db1d6f7c140 Mon Sep 17 00:00:00 2001
+From: LeiZhou-97 <lei.zhou@intel.com>
+Date: Mon, 28 Aug 2023 13:54:51 +0800
+Subject: [PATCH 06/18] Adjust memory limits of qemu process if TDX was used
+
+Signed-off-by: LeiZhou-97 <lei.zhou@intel.com>
+---
+ pkg/virt-controller/services/renderresources.go | 5 +++++
+ pkg/virt-handler/isolation/detector.go          | 6 +++---
+ 2 files changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/pkg/virt-controller/services/renderresources.go b/pkg/virt-controller/services/renderresources.go
+index 5ba669bb7d4e..3efd3c6796db 100644
+--- a/pkg/virt-controller/services/renderresources.go
++++ b/pkg/virt-controller/services/renderresources.go
+@@ -367,6 +367,11 @@ func GetMemoryOverhead(vmi *v1.VirtualMachineInstance, cpuArch string, additiona
+ 		overhead.Add(resource.MustParse("256Mi"))
+ 	}
+ 
++	// Consider memory overhead for TDX guests.
++	if util.IsTDXVMI(vmi) {
++		overhead.Add(resource.MustParse("256Mi"))
++	}
++
+ 	// Having a TPM device will spawn a swtpm process
+ 	// In `ps`, swtpm has VSZ of 53808 and RSS of 3496, so 53Mi should do
+ 	if vmi.Spec.Domain.Devices.TPM != nil {
+diff --git a/pkg/virt-handler/isolation/detector.go b/pkg/virt-handler/isolation/detector.go
+index 62f9200255bd..b3ad025aa75c 100644
+--- a/pkg/virt-handler/isolation/detector.go
++++ b/pkg/virt-handler/isolation/detector.go
+@@ -109,7 +109,7 @@ func (s *socketBasedIsolationDetector) Allowlist(controller []string) PodIsolati
+ 
+ func (s *socketBasedIsolationDetector) AdjustResources(vm *v1.VirtualMachineInstance, additionalOverheadRatio *string) error {
+ 	// only VFIO attached or with lock guest memory domains require MEMLOCK adjustment
+-	if !util.IsVFIOVMI(vm) && !vm.IsRealtimeEnabled() && !util.IsSEVVMI(vm) {
++	if !util.IsVFIOVMI(vm) && !vm.IsRealtimeEnabled() && !util.IsSEVVMI(vm) && !util.IsTDXVMI(vm) {
+ 		return nil
+ 	}
+ 
+@@ -154,9 +154,9 @@ func (s *socketBasedIsolationDetector) AdjustResources(vm *v1.VirtualMachineInst
+ 
+ // AdjustQemuProcessMemoryLimits adjusts QEMU process MEMLOCK rlimits that runs inside
+ // virt-launcher pod on the given VMI according to its spec.
+-// Only VMI's with VFIO devices (e.g: SRIOV, GPU), SEV or RealTime workloads require QEMU process MEMLOCK adjustment.
++// Only VMI's with VFIO devices (e.g: SRIOV, GPU), SEV, TDX or RealTime workloads require QEMU process MEMLOCK adjustment.
+ func AdjustQemuProcessMemoryLimits(podIsoDetector PodIsolationDetector, vmi *v1.VirtualMachineInstance, additionalOverheadRatio *string) error {
+-	if !util.IsVFIOVMI(vmi) && !vmi.IsRealtimeEnabled() && !util.IsSEVVMI(vmi) {
++	if !util.IsVFIOVMI(vmi) && !vmi.IsRealtimeEnabled() && !util.IsSEVVMI(vmi) && !util.IsTDXVMI(vmi) {
+ 		return nil
+ 	}
+ 
+-- 
+2.45.0
+

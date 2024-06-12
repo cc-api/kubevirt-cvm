@@ -1,0 +1,222 @@
+From c543ac83aa4c0271f60b267358c2e92feb1ca2c1 Mon Sep 17 00:00:00 2001
+From: LeiZhou-97 <lei.zhou@intel.com>
+Date: Mon, 28 Aug 2023 13:08:46 +0800
+Subject: [PATCH 04/18] Convert Intel TDX parameter and configure the libvirt
+ domain
+
+Signed-off-by: LeiZhou-97 <lei.zhou@intel.com>
+---
+ pkg/util/util.go                              |  5 ++
+ .../virtwrap/converter/converter.go           | 18 ++++--
+ .../virtwrap/converter/converter_test.go      | 58 +++++++++++++++++--
+ .../virtwrap/converter/network.go             |  2 +-
+ pkg/virt-launcher/virtwrap/manager.go         |  3 +-
+ 5 files changed, 73 insertions(+), 13 deletions(-)
+
+diff --git a/pkg/util/util.go b/pkg/util/util.go
+index dbf14064ac24..0cb2f10006eb 100644
+--- a/pkg/util/util.go
++++ b/pkg/util/util.go
+@@ -113,6 +113,11 @@ func IsSEVESVMI(vmi *v1.VirtualMachineInstance) bool {
+ 		*vmi.Spec.Domain.LaunchSecurity.SEV.Policy.EncryptedState == true
+ }
+ 
++// Check if a VMI spec requests Intel TDX
++func IsTDXVMI(vmi *v1.VirtualMachineInstance) bool {
++	return vmi.Spec.Domain.LaunchSecurity != nil && vmi.Spec.Domain.LaunchSecurity.TDX != nil
++}
++
+ func IsVmiUsingHyperVReenlightenment(vmi *v1.VirtualMachineInstance) bool {
+ 	if vmi == nil {
+ 		return false
+diff --git a/pkg/virt-launcher/virtwrap/converter/converter.go b/pkg/virt-launcher/virtwrap/converter/converter.go
+index db3c0a903f98..d32bf088f6c1 100644
+--- a/pkg/virt-launcher/virtwrap/converter/converter.go
++++ b/pkg/virt-launcher/virtwrap/converter/converter.go
+@@ -117,7 +117,8 @@ type ConverterContext struct {
+ 	VolumesDiscardIgnore  []string
+ 	Topology              *cmdv1.Topology
+ 	ExpandDisksEnabled    bool
+-	UseLaunchSecurity     bool
++	UseLaunchSecuritySEV  bool
++	UseLaunchSecurityTDX  bool
+ 	FreePageReporting     bool
+ }
+ 
+@@ -232,7 +233,7 @@ func Convert_v1_Disk_To_api_Disk(c *ConverterContext, diskDevice *v1.Disk, disk
+ 	if diskDevice.BootOrder != nil {
+ 		disk.BootOrder = &api.BootOrder{Order: *diskDevice.BootOrder}
+ 	}
+-	if c.UseLaunchSecurity && disk.Target.Bus == v1.DiskBusVirtio {
++	if c.UseLaunchSecuritySEV && disk.Target.Bus == v1.DiskBusVirtio {
+ 		disk.Driver.IOMMU = "on"
+ 	}
+ 
+@@ -924,7 +925,7 @@ func Convert_v1_Rng_To_api_Rng(_ *v1.Rng, rng *api.Rng, c *ConverterContext) err
+ 	// the default source for rng is dev urandom
+ 	rng.Backend.Source = "/dev/urandom"
+ 
+-	if c.UseLaunchSecurity {
++	if c.UseLaunchSecuritySEV {
+ 		rng.Driver = &api.RngDriver{
+ 			IOMMU: "on",
+ 		}
+@@ -1154,7 +1155,7 @@ func ConvertV1ToAPIBalloning(source *v1.Devices, ballooning *api.MemBalloon, c *
+ 		if c.MemBalloonStatsPeriod != 0 {
+ 			ballooning.Stats = &api.Stats{Period: c.MemBalloonStatsPeriod}
+ 		}
+-		if c.UseLaunchSecurity {
++		if c.UseLaunchSecuritySEV {
+ 			ballooning.Driver = &api.MemBalloonDriver{
+ 				IOMMU: "on",
+ 			}
+@@ -1323,7 +1324,7 @@ func Convert_v1_VirtualMachineInstance_To_api_Domain(vmi *v1.VirtualMachineInsta
+ 
+ 	}
+ 	// Set SEV launch security parameters: https://libvirt.org/formatdomain.html#launch-security
+-	if c.UseLaunchSecurity {
++	if c.UseLaunchSecuritySEV {
+ 		sevPolicyBits := launchsecurity.SEVPolicyToBits(vmi.Spec.Domain.LaunchSecurity.SEV.Policy)
+ 		// Cbitpos and ReducedPhysBits will be filled automatically by libvirt from the domain capabilities
+ 		domain.Spec.LaunchSecurity = &api.LaunchSecurity{
+@@ -1334,6 +1335,13 @@ func Convert_v1_VirtualMachineInstance_To_api_Domain(vmi *v1.VirtualMachineInsta
+ 			IOMMU: "on",
+ 		}
+ 	}
++	// Set TDX launch security parameters
++	if c.UseLaunchSecurityTDX {
++		domain.Spec.LaunchSecurity = &api.LaunchSecurity{
++			Type:   "tdx",
++			Policy: launchsecurity.TDXPolicy(), // Always set TDX NoDebug policy
++		}
++	}
+ 	if c.SMBios != nil {
+ 		domain.Spec.SysInfo.System = append(domain.Spec.SysInfo.System,
+ 			api.Entry{
+diff --git a/pkg/virt-launcher/virtwrap/converter/converter_test.go b/pkg/virt-launcher/virtwrap/converter/converter_test.go
+index c11758dc3d6d..b07798f29879 100644
+--- a/pkg/virt-launcher/virtwrap/converter/converter_test.go
++++ b/pkg/virt-launcher/virtwrap/converter/converter_test.go
+@@ -52,7 +52,7 @@ import (
+ 	kvapi "kubevirt.io/client-go/api"
+ 
+ 	cmdv1 "kubevirt.io/kubevirt/pkg/handler-launcher-com/cmd/v1"
+-	sev "kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/launchsecurity"
++	"kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/launchsecurity"
+ )
+ 
+ var _ = Describe("getOptimalBlockIO", func() {
+@@ -3219,9 +3219,9 @@ var _ = Describe("Converter", func() {
+ 				},
+ 			}
+ 			c = &ConverterContext{
+-				AllowEmulation:    true,
+-				EFIConfiguration:  &EFIConfiguration{},
+-				UseLaunchSecurity: true,
++				AllowEmulation:       true,
++				EFIConfiguration:     &EFIConfiguration{},
++				UseLaunchSecuritySEV: true,
+ 			}
+ 		})
+ 
+@@ -3230,7 +3230,7 @@ var _ = Describe("Converter", func() {
+ 			Expect(domain).ToNot(BeNil())
+ 			Expect(domain.Spec.LaunchSecurity).ToNot(BeNil())
+ 			Expect(domain.Spec.LaunchSecurity.Type).To(Equal("sev"))
+-			Expect(domain.Spec.LaunchSecurity.Policy).To(Equal("0x" + strconv.FormatUint(uint64(sev.SEVPolicyNoDebug), 16)))
++			Expect(domain.Spec.LaunchSecurity.Policy).To(Equal("0x" + strconv.FormatUint(uint64(launchsecurity.SEVPolicyNoDebug), 16)))
+ 		})
+ 
+ 		It("should set LaunchSecurity domain element with 'sev' type with 'NoDebug' and 'EncryptedState' policy bits", func() {
+@@ -3246,7 +3246,7 @@ var _ = Describe("Converter", func() {
+ 			Expect(domain).ToNot(BeNil())
+ 			Expect(domain.Spec.LaunchSecurity).ToNot(BeNil())
+ 			Expect(domain.Spec.LaunchSecurity.Type).To(Equal("sev"))
+-			Expect(domain.Spec.LaunchSecurity.Policy).To(Equal("0x" + strconv.FormatUint(uint64(sev.SEVPolicyNoDebug|sev.SEVPolicyEncryptedState), 16)))
++			Expect(domain.Spec.LaunchSecurity.Policy).To(Equal("0x" + strconv.FormatUint(uint64(launchsecurity.SEVPolicyNoDebug|launchsecurity.SEVPolicyEncryptedState), 16)))
+ 		})
+ 
+ 		It("should set IOMMU attribute of the RngDriver", func() {
+@@ -3295,6 +3295,52 @@ var _ = Describe("Converter", func() {
+ 		})
+ 	})
+ 
++	Context("with Intel TDX LaunchSecurity", func() {
++		var (
++			vmi *v1.VirtualMachineInstance
++			c   *ConverterContext
++		)
++
++		BeforeEach(func() {
++			vmi = kvapi.NewMinimalVMI("testvmi")
++			v1.SetObjectDefaults_VirtualMachineInstance(vmi)
++			vmi.Spec.Domain.Devices.Interfaces = []v1.Interface{
++				*v1.DefaultBridgeNetworkInterface(), *v1.DefaultSlirpNetworkInterface(),
++			}
++			vmi.Spec.Networks = []v1.Network{
++				*v1.DefaultPodNetwork(), *v1.DefaultPodNetwork(),
++			}
++			vmi.Spec.Domain.LaunchSecurity = &v1.LaunchSecurity{
++				TDX: &v1.TDX{},
++			}
++			vmi.Spec.Domain.Features = &v1.Features{
++				SMM: &v1.FeatureState{
++					Enabled: pointer.BoolPtr(false),
++				},
++			}
++			vmi.Spec.Domain.Firmware = &v1.Firmware{
++				Bootloader: &v1.Bootloader{
++					EFI: &v1.EFI{
++						SecureBoot: pointer.BoolPtr(false),
++					},
++				},
++			}
++			c = &ConverterContext{
++				AllowEmulation:       true,
++				EFIConfiguration:     &EFIConfiguration{},
++				UseLaunchSecurityTDX: true,
++			}
++		})
++
++		It("should set LaunchSecurity domain element with 'tdx' type and 'NoDebug' policy", func() {
++			domain := vmiToDomain(vmi, c)
++			Expect(domain).ToNot(BeNil())
++			Expect(domain.Spec.LaunchSecurity).ToNot(BeNil())
++			Expect(domain.Spec.LaunchSecurity.Type).To(Equal("tdx"))
++			Expect(domain.Spec.LaunchSecurity.Policy).To(Equal(launchsecurity.TDXPolicyNoDebug))
++		})
++	})
++
+ 	Context("when TSC Frequency", func() {
+ 		var (
+ 			vmi *v1.VirtualMachineInstance
+diff --git a/pkg/virt-launcher/virtwrap/converter/network.go b/pkg/virt-launcher/virtwrap/converter/network.go
+index 23ffacc75137..ad75293fbb38 100644
+--- a/pkg/virt-launcher/virtwrap/converter/network.go
++++ b/pkg/virt-launcher/virtwrap/converter/network.go
+@@ -132,7 +132,7 @@ func CreateDomainInterfaces(vmi *v1.VirtualMachineInstance, domain *api.Domain,
+ 			domain.Spec.Devices.Emulator = "/usr/bin/qrap"
+ 		}
+ 
+-		if c.UseLaunchSecurity {
++		if c.UseLaunchSecuritySEV {
+ 			// It's necessary to disable the iPXE option ROM as iPXE is not aware of SEV
+ 			domainIface.Rom = &api.Rom{Enabled: "no"}
+ 			if ifaceType == v1.VirtIO {
+diff --git a/pkg/virt-launcher/virtwrap/manager.go b/pkg/virt-launcher/virtwrap/manager.go
+index 607618232728..70211a3f60ab 100644
+--- a/pkg/virt-launcher/virtwrap/manager.go
++++ b/pkg/virt-launcher/virtwrap/manager.go
+@@ -890,7 +890,8 @@ func (l *LibvirtDomainManager) generateConverterContext(vmi *v1.VirtualMachineIn
+ 		UseVirtioTransitional: vmi.Spec.Domain.Devices.UseVirtioTransitional != nil && *vmi.Spec.Domain.Devices.UseVirtioTransitional,
+ 		PermanentVolumes:      permanentVolumes,
+ 		EphemeraldiskCreator:  l.ephemeralDiskCreator,
+-		UseLaunchSecurity:     kutil.IsSEVVMI(vmi),
++		UseLaunchSecuritySEV:  kutil.IsSEVVMI(vmi),
++		UseLaunchSecurityTDX:  kutil.IsTDXVMI(vmi),
+ 		FreePageReporting:     isFreePageReportingEnabled(false, vmi),
+ 	}
+ 
+-- 
+2.45.0
+

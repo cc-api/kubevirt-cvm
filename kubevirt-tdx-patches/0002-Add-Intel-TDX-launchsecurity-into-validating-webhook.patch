@@ -1,0 +1,224 @@
+From 73a75e15637bf976516b252ada31efede5c580f7 Mon Sep 17 00:00:00 2001
+From: LeiZhou-97 <lei.zhou@intel.com>
+Date: Fri, 14 Jul 2023 14:16:38 +0800
+Subject: [PATCH 02/18] Add Intel TDX launchsecurity into validating webhook
+
+Check if enable WorkloadEncryptionTDX feature gate for Intel TDX
+launchsecurity.
+
+Signed-off-by: LeiZhou-97 <lei.zhou@intel.com>
+---
+ .../admitters/vmi-create-admitter.go          | 41 +++++----
+ .../admitters/vmi-create-admitter_test.go     | 84 +++++++++++++++++--
+ pkg/virt-config/feature-gates.go              |  5 ++
+ 3 files changed, 108 insertions(+), 22 deletions(-)
+
+diff --git a/pkg/virt-api/webhooks/validating-webhook/admitters/vmi-create-admitter.go b/pkg/virt-api/webhooks/validating-webhook/admitters/vmi-create-admitter.go
+index 3da406da1685..f150d752e9f0 100644
+--- a/pkg/virt-api/webhooks/validating-webhook/admitters/vmi-create-admitter.go
++++ b/pkg/virt-api/webhooks/validating-webhook/admitters/vmi-create-admitter.go
+@@ -882,36 +882,45 @@ func validateSoundDevices(field *k8sfield.Path, spec *v1.VirtualMachineInstanceS
+ 
+ func validateLaunchSecurity(field *k8sfield.Path, spec *v1.VirtualMachineInstanceSpec, config *virtconfig.ClusterConfig) (causes []metav1.StatusCause) {
+ 	launchSecurity := spec.Domain.LaunchSecurity
+-	if launchSecurity != nil && !config.WorkloadEncryptionSEVEnabled() {
+-		causes = append(causes, metav1.StatusCause{
+-			Type:    metav1.CauseTypeFieldValueInvalid,
+-			Message: fmt.Sprintf("%s feature gate is not enabled in kubevirt-config", virtconfig.WorkloadEncryptionSEV),
+-			Field:   field.Child("launchSecurity").String(),
+-		})
+-	} else if launchSecurity != nil && launchSecurity.SEV != nil {
+-		firmware := spec.Domain.Firmware
+-		if firmware == nil || firmware.Bootloader == nil || firmware.Bootloader.EFI == nil {
++	if launchSecurity != nil {
++		if !config.WorkloadEncryptionSEVEnabled() && !config.WorkloadEncryptionTDXEnabled() {
+ 			causes = append(causes, metav1.StatusCause{
+ 				Type:    metav1.CauseTypeFieldValueInvalid,
+-				Message: "SEV requires OVMF (UEFI)",
++				Message: "neither WorkloadEncryptionSEV nor WorkloadEncryptionTDX feature gate is not enabled in kubevirt-config",
+ 				Field:   field.Child("launchSecurity").String(),
+ 			})
+-		} else if firmware.Bootloader.EFI.SecureBoot == nil || *firmware.Bootloader.EFI.SecureBoot {
++		} else if config.WorkloadEncryptionSEVEnabled() && config.WorkloadEncryptionTDXEnabled() {
+ 			causes = append(causes, metav1.StatusCause{
+ 				Type:    metav1.CauseTypeFieldValueInvalid,
+-				Message: "SEV does not work along with SecureBoot",
++				Message: "WorkloadEncryptionSEV and WorkloadEncryptionTDX cannot coexist",
+ 				Field:   field.Child("launchSecurity").String(),
+ 			})
+ 		}
+-
+-		for _, iface := range spec.Domain.Devices.Interfaces {
+-			if iface.BootOrder != nil {
++		if launchSecurity.TDX != nil || launchSecurity.SEV != nil {
++			firmware := spec.Domain.Firmware
++			if firmware == nil || firmware.Bootloader == nil || firmware.Bootloader.EFI == nil {
++				causes = append(causes, metav1.StatusCause{
++					Type:    metav1.CauseTypeFieldValueInvalid,
++					Message: "WorkloadEncryption requires OVMF (UEFI)",
++					Field:   field.Child("launchSecurity").String(),
++				})
++			} else if firmware.Bootloader.EFI.SecureBoot == nil || *firmware.Bootloader.EFI.SecureBoot {
+ 				causes = append(causes, metav1.StatusCause{
+ 					Type:    metav1.CauseTypeFieldValueInvalid,
+-					Message: fmt.Sprintf("SEV does not work with bootable NICs: %s", iface.Name),
++					Message: "WorkloadEncryption does not work along with SecureBoot",
+ 					Field:   field.Child("launchSecurity").String(),
+ 				})
+ 			}
++
++			for _, iface := range spec.Domain.Devices.Interfaces {
++				if iface.BootOrder != nil {
++					causes = append(causes, metav1.StatusCause{
++						Type:    metav1.CauseTypeFieldValueInvalid,
++						Message: fmt.Sprintf("WorkloadEncryption does not work with bootable NICs: %s", iface.Name),
++						Field:   field.Child("launchSecurity").String(),
++					})
++				}
++			}
+ 		}
+ 	}
+ 	return causes
+diff --git a/pkg/virt-api/webhooks/validating-webhook/admitters/vmi-create-admitter_test.go b/pkg/virt-api/webhooks/validating-webhook/admitters/vmi-create-admitter_test.go
+index 36f6a6cbdc4f..28888e8831de 100644
+--- a/pkg/virt-api/webhooks/validating-webhook/admitters/vmi-create-admitter_test.go
++++ b/pkg/virt-api/webhooks/validating-webhook/admitters/vmi-create-admitter_test.go
+@@ -3783,22 +3783,22 @@ var _ = Describe("Validating VMICreate Admitter", func() {
+ 			disableFeatureGates()
+ 			causes := ValidateVirtualMachineInstanceSpec(k8sfield.NewPath("fake"), &vmi.Spec, config)
+ 			Expect(causes).To(HaveLen(1))
+-			Expect(causes[0].Message).To(ContainSubstring(fmt.Sprintf("%s feature gate is not enabled", virtconfig.WorkloadEncryptionSEV)))
++			Expect(causes[0].Message).To(ContainSubstring("neither WorkloadEncryptionSEV nor WorkloadEncryptionTDX feature gate is not enabled in kubevirt-config"))
+ 		})
+ 
+ 		It("should reject when UEFI is not configured", func() {
+ 			vmi.Spec.Domain.Firmware.Bootloader.EFI = nil
+ 			causes := ValidateVirtualMachineInstanceSpec(k8sfield.NewPath("fake"), &vmi.Spec, config)
+ 			Expect(causes).To(HaveLen(1))
+-			Expect(causes[0].Message).To(ContainSubstring("SEV requires OVMF"))
++			Expect(causes[0].Message).To(ContainSubstring("WorkloadEncryption requires OVMF"))
+ 			vmi.Spec.Domain.Firmware.Bootloader = nil
+ 			causes = ValidateVirtualMachineInstanceSpec(k8sfield.NewPath("fake"), &vmi.Spec, config)
+ 			Expect(causes).To(HaveLen(1))
+-			Expect(causes[0].Message).To(ContainSubstring("SEV requires OVMF"))
++			Expect(causes[0].Message).To(ContainSubstring("WorkloadEncryption requires OVMF"))
+ 			vmi.Spec.Domain.Firmware = nil
+ 			causes = ValidateVirtualMachineInstanceSpec(k8sfield.NewPath("fake"), &vmi.Spec, config)
+ 			Expect(causes).To(HaveLen(1))
+-			Expect(causes[0].Message).To(ContainSubstring("SEV requires OVMF"))
++			Expect(causes[0].Message).To(ContainSubstring("WorkloadEncryption requires OVMF"))
+ 		})
+ 
+ 		It("should reject when SecureBoot is enabled", func() {
+@@ -3810,11 +3810,83 @@ var _ = Describe("Validating VMICreate Admitter", func() {
+ 			vmi.Spec.Domain.Firmware.Bootloader.EFI.SecureBoot = pointer.Bool(true)
+ 			causes := ValidateVirtualMachineInstanceSpec(k8sfield.NewPath("fake"), &vmi.Spec, config)
+ 			Expect(causes).To(HaveLen(1))
+-			Expect(causes[0].Message).To(ContainSubstring("SEV does not work along with SecureBoot"))
++			Expect(causes[0].Message).To(ContainSubstring("WorkloadEncryption does not work along with SecureBoot"))
+ 			vmi.Spec.Domain.Firmware.Bootloader.EFI.SecureBoot = nil
+ 			causes = ValidateVirtualMachineInstanceSpec(k8sfield.NewPath("fake"), &vmi.Spec, config)
+ 			Expect(causes).To(HaveLen(1))
+-			Expect(causes[0].Message).To(ContainSubstring("SEV does not work along with SecureBoot"))
++			Expect(causes[0].Message).To(ContainSubstring("WorkloadEncryption does not work along with SecureBoot"))
++		})
++
++		It("should reject when there are bootable NICs", func() {
++			vmi.Spec.Networks = []v1.Network{*v1.DefaultPodNetwork()}
++			bootOrder := uint(1)
++			vmi.Spec.Domain.Devices.Interfaces = []v1.Interface{
++				{Name: vmi.Spec.Networks[0].Name, BootOrder: &bootOrder},
++			}
++			causes := ValidateVirtualMachineInstanceSpec(k8sfield.NewPath("fake"), &vmi.Spec, config)
++			Expect(causes).To(HaveLen(len(vmi.Spec.Domain.Devices.Interfaces)))
++		})
++	})
++
++	Context("with Intel TDX LaunchSecurity", func() {
++		var vmi *v1.VirtualMachineInstance
++
++		BeforeEach(func() {
++			vmi = api.NewMinimalVMI("testvmi")
++			vmi.Spec.Domain.LaunchSecurity = &v1.LaunchSecurity{
++				TDX: &v1.TDX{},
++			}
++			vmi.Spec.Domain.Firmware = &v1.Firmware{
++				Bootloader: &v1.Bootloader{
++					EFI: &v1.EFI{
++						SecureBoot: pointer.Bool(false),
++					},
++				},
++			}
++			enableFeatureGate(virtconfig.WorkloadEncryptionTDX)
++		})
++
++		It("should accept when the feature gate is enabled and OVMF is configured", func() {
++			causes := ValidateVirtualMachineInstanceSpec(k8sfield.NewPath("fake"), &vmi.Spec, config)
++			Expect(causes).To(BeEmpty())
++		})
++
++		It("should reject when the feature gate is disabled", func() {
++			disableFeatureGates()
++			causes := ValidateVirtualMachineInstanceSpec(k8sfield.NewPath("fake"), &vmi.Spec, config)
++			Expect(causes).To(HaveLen(1))
++			Expect(causes[0].Message).To(ContainSubstring("neither WorkloadEncryptionSEV nor WorkloadEncryptionTDX feature gate is not enabled in kubevirt-config"))
++		})
++
++		It("should reject when UEFI is not configured", func() {
++			vmi.Spec.Domain.Firmware.Bootloader.EFI = nil
++			causes := ValidateVirtualMachineInstanceSpec(k8sfield.NewPath("fake"), &vmi.Spec, config)
++			Expect(causes).To(HaveLen(1))
++			Expect(causes[0].Message).To(ContainSubstring("WorkloadEncryption requires OVMF"))
++			vmi.Spec.Domain.Firmware.Bootloader = nil
++			causes = ValidateVirtualMachineInstanceSpec(k8sfield.NewPath("fake"), &vmi.Spec, config)
++			Expect(causes).To(HaveLen(1))
++			Expect(causes[0].Message).To(ContainSubstring("WorkloadEncryption requires OVMF"))
++			vmi.Spec.Domain.Firmware = nil
++			causes = ValidateVirtualMachineInstanceSpec(k8sfield.NewPath("fake"), &vmi.Spec, config)
++			Expect(causes).To(HaveLen(1))
++			Expect(causes[0].Message).To(ContainSubstring("WorkloadEncryption requires OVMF"))
++		})
++
++		It("should reject when SecureBoot is enabled", func() {
++			vmi.Spec.Domain.Features = &v1.Features{
++				SMM: &v1.FeatureState{
++					Enabled: pointer.Bool(true),
++				},
++			}
++			vmi.Spec.Domain.Firmware.Bootloader.EFI.SecureBoot = pointer.Bool(true)
++			causes := ValidateVirtualMachineInstanceSpec(k8sfield.NewPath("fake"), &vmi.Spec, config)
++			Expect(causes).To(HaveLen(1))
++			Expect(causes[0].Message).To(ContainSubstring("WorkloadEncryption does not work along with SecureBoot"))
++			vmi.Spec.Domain.Firmware.Bootloader.EFI.SecureBoot = nil
++			causes = ValidateVirtualMachineInstanceSpec(k8sfield.NewPath("fake"), &vmi.Spec, config)
++			Expect(causes).To(HaveLen(1))
++			Expect(causes[0].Message).To(ContainSubstring("WorkloadEncryption does not work along with SecureBoot"))
+ 		})
+ 
+ 		It("should reject when there are bootable NICs", func() {
+diff --git a/pkg/virt-config/feature-gates.go b/pkg/virt-config/feature-gates.go
+index 0ba4ecb6757f..23aec825a900 100644
+--- a/pkg/virt-config/feature-gates.go
++++ b/pkg/virt-config/feature-gates.go
+@@ -49,6 +49,7 @@ const (
+ 	Root                       = "Root"
+ 	ClusterProfiler            = "ClusterProfiler"
+ 	WorkloadEncryptionSEV      = "WorkloadEncryptionSEV"
++	WorkloadEncryptionTDX      = "WorkloadEncryptionTDX"
+ 	// DockerSELinuxMCSWorkaround sets the SELinux level of all the non-compute virt-launcher containers to "s0".
+ 	DockerSELinuxMCSWorkaround = "DockerSELinuxMCSWorkaround"
+ 	PSA                        = "PSA"
+@@ -193,6 +194,10 @@ func (config *ClusterConfig) WorkloadEncryptionSEVEnabled() bool {
+ 	return config.isFeatureGateEnabled(WorkloadEncryptionSEV)
+ }
+ 
++func (config *ClusterConfig) WorkloadEncryptionTDXEnabled() bool {
++	return config.isFeatureGateEnabled(WorkloadEncryptionTDX)
++}
++
+ func (config *ClusterConfig) DockerSELinuxMCSWorkaroundEnabled() bool {
+ 	return config.isFeatureGateEnabled(DockerSELinuxMCSWorkaround)
+ }
+-- 
+2.45.0
+
