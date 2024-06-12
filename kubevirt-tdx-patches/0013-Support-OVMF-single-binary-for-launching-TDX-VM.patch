@@ -1,0 +1,138 @@
+From 155b2beada410548a41a063ac365f1bd617b02f7 Mon Sep 17 00:00:00 2001
+From: LeiZhou-97 <lei.zhou@intel.com>
+Date: Wed, 30 Aug 2023 14:45:31 +0800
+Subject: [PATCH 13/18] Support OVMF single binary for launching TDX VM
+
+Right now, kubevirt only support to boot VMs with OVMF_CODE.fd and
+OVMF_VARS.fd together. Add an alternative approach that just use one
+OVMF.fd to boot VMs in some cases that some VMs not supports the
+first one, like TDX VMs.
+
+Signed-off-by: LeiZhou-97 <lei.zhou@intel.com>
+---
+ .../virtwrap/converter/converter.go           | 27 ++++++++++++-------
+ pkg/virt-launcher/virtwrap/efi/efi.go         |  8 ++++++
+ pkg/virt-launcher/virtwrap/manager.go         |  1 +
+ rpm/BUILD.bazel                               |  1 +
+ 4 files changed, 28 insertions(+), 9 deletions(-)
+
+diff --git a/pkg/virt-launcher/virtwrap/converter/converter.go b/pkg/virt-launcher/virtwrap/converter/converter.go
+index a14e780ff1ac..202b17c3080b 100644
+--- a/pkg/virt-launcher/virtwrap/converter/converter.go
++++ b/pkg/virt-launcher/virtwrap/converter/converter.go
+@@ -90,6 +90,7 @@ type deviceNamer struct {
+ }
+ 
+ type EFIConfiguration struct {
++	EFI          string
+ 	EFICode      string
+ 	EFIVars      string
+ 	SecureLoader bool
+@@ -1276,16 +1277,24 @@ func Convert_v1_VirtualMachineInstance_To_api_Domain(vmi *v1.VirtualMachineInsta
+ 		}
+ 
+ 		if vmi.Spec.Domain.Firmware.Bootloader != nil && vmi.Spec.Domain.Firmware.Bootloader.EFI != nil {
+-			domain.Spec.OS.BootLoader = &api.Loader{
+-				Path:     c.EFIConfiguration.EFICode,
+-				ReadOnly: "yes",
+-				Secure:   boolToYesNo(&c.EFIConfiguration.SecureLoader, false),
+-				Type:     "pflash",
+-			}
++			if c.UseLaunchSecurityTDX {
++				// tdx use ovmf single binary
++				domain.Spec.OS.BootLoader = &api.Loader{
++					Path:   c.EFIConfiguration.EFI,
++					Secure: boolToYesNo(&c.EFIConfiguration.SecureLoader, false),
++				}
++			} else {
++				domain.Spec.OS.BootLoader = &api.Loader{
++					Path:     c.EFIConfiguration.EFICode,
++					ReadOnly: "yes",
++					Secure:   boolToYesNo(&c.EFIConfiguration.SecureLoader, false),
++					Type:     "pflash",
++				}
+ 
+-			domain.Spec.OS.NVRam = &api.NVRam{
+-				NVRam:    filepath.Join("/tmp", domain.Spec.Name),
+-				Template: c.EFIConfiguration.EFIVars,
++				domain.Spec.OS.NVRam = &api.NVRam{
++					NVRam:    filepath.Join("/tmp", domain.Spec.Name),
++					Template: c.EFIConfiguration.EFIVars,
++				}
+ 			}
+ 		}
+ 
+diff --git a/pkg/virt-launcher/virtwrap/efi/efi.go b/pkg/virt-launcher/virtwrap/efi/efi.go
+index 0a51067dc087..2ffbace5e584 100644
+--- a/pkg/virt-launcher/virtwrap/efi/efi.go
++++ b/pkg/virt-launcher/virtwrap/efi/efi.go
+@@ -25,6 +25,7 @@ import (
+ )
+ 
+ const (
++	EFI               = "OVMF.fd"
+ 	EFICode           = "OVMF_CODE.fd"
+ 	EFIVars           = "OVMF_VARS.fd"
+ 	EFICodeAARCH64    = "AAVMF_CODE.fd"
+@@ -36,6 +37,7 @@ const (
+ )
+ 
+ type EFIEnvironment struct {
++	efi            string
+ 	code           string
+ 	vars           string
+ 	codeSecureBoot string
+@@ -54,6 +56,10 @@ func (e *EFIEnvironment) Bootable(secureBoot, sev bool) bool {
+ 	}
+ }
+ 
++func (e *EFIEnvironment) EFI() string {
++	return e.efi
++}
++
+ func (e *EFIEnvironment) EFICode(secureBoot, sev bool) string {
+ 	if secureBoot {
+ 		return e.codeSecureBoot
+@@ -90,6 +96,7 @@ func DetectEFIEnvironment(arch, ovmfPath string) *EFIEnvironment {
+ 	varsWithSB := getEFIBinaryIfExists(ovmfPath, EFIVarsSecureBoot)
+ 
+ 	// detect EFI without SecureBoot
++	efi := getEFIBinaryIfExists(ovmfPath, EFI)
+ 	code := getEFIBinaryIfExists(ovmfPath, EFICode)
+ 	vars := getEFIBinaryIfExists(ovmfPath, EFIVars)
+ 	if code == "" {
+@@ -105,6 +112,7 @@ func DetectEFIEnvironment(arch, ovmfPath string) *EFIEnvironment {
+ 	return &EFIEnvironment{
+ 		codeSecureBoot: codeWithSB,
+ 		varsSecureBoot: varsWithSB,
++		efi:            efi,
+ 		code:           code,
+ 		vars:           vars,
+ 		codeSEV:        codeWithSEV,
+diff --git a/pkg/virt-launcher/virtwrap/manager.go b/pkg/virt-launcher/virtwrap/manager.go
+index 70211a3f60ab..4b4412a7d251 100644
+--- a/pkg/virt-launcher/virtwrap/manager.go
++++ b/pkg/virt-launcher/virtwrap/manager.go
+@@ -872,6 +872,7 @@ func (l *LibvirtDomainManager) generateConverterContext(vmi *v1.VirtualMachineIn
+ 		}
+ 
+ 		efiConf = &converter.EFIConfiguration{
++			EFI:          l.efiEnvironment.EFI(),
+ 			EFICode:      l.efiEnvironment.EFICode(secureBoot, sev),
+ 			EFIVars:      l.efiEnvironment.EFIVars(secureBoot, sev),
+ 			SecureLoader: secureBoot,
+diff --git a/rpm/BUILD.bazel b/rpm/BUILD.bazel
+index 418bfb8988d6..6099b330442d 100644
+--- a/rpm/BUILD.bazel
++++ b/rpm/BUILD.bazel
+@@ -826,6 +826,7 @@ rpmtree(
+         "/usr/bin/nc": "/usr/bin/ncat",
+         # Create a symlink to OVMF binary with SEV support (edk2 rpm does not do that for unknown reason)
+         "/usr/share/OVMF/OVMF_CODE.cc.fd": "../edk2/ovmf/OVMF_CODE.cc.fd",
++        "/usr/share/OVMF/OVMF.fd": "/usr/share/qemu/OVMF.fd",
+     },
+     visibility = ["//visibility:public"],
+ )
+-- 
+2.45.0
+

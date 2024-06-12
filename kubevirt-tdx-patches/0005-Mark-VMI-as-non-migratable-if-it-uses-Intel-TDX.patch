@@ -1,0 +1,69 @@
+From eb357e81842a363f92204c13561fe513b142f53d Mon Sep 17 00:00:00 2001
+From: LeiZhou-97 <lei.zhou@intel.com>
+Date: Mon, 28 Aug 2023 13:23:05 +0800
+Subject: [PATCH 05/18] Mark VMI as non-migratable if it uses Intel TDX
+
+Currently, live migration of tdx has not yet been implemented.
+
+Signed-off-by: LeiZhou-97 <lei.zhou@intel.com>
+---
+ pkg/virt-handler/vm.go                       |  4 ++++
+ pkg/virt-handler/vm_test.go                  | 13 +++++++++++++
+ staging/src/kubevirt.io/api/core/v1/types.go |  2 ++
+ 3 files changed, 19 insertions(+)
+
+diff --git a/pkg/virt-handler/vm.go b/pkg/virt-handler/vm.go
+index 6f495dc77610..1a4c7e12e0e2 100644
+--- a/pkg/virt-handler/vm.go
++++ b/pkg/virt-handler/vm.go
+@@ -1469,6 +1469,10 @@ func (d *VirtualMachineController) calculateLiveMigrationCondition(vmi *v1.Virtu
+ 		return newNonMigratableCondition("VMI uses SEV", v1.VirtualMachineInstanceReasonSEVNotMigratable), isBlockMigration
+ 	}
+ 
++	if util.IsTDXVMI(vmi) {
++		return newNonMigratableCondition("VMI uses TDX", v1.VirtualMachineInstanceReasonTDXNotMigratable), isBlockMigration
++	}
++
+ 	if reservation.HasVMIPersistentReservation(vmi) {
+ 		return newNonMigratableCondition("VMI uses SCSI persitent reservation", v1.VirtualMachineInstanceReasonPRNotMigratable), isBlockMigration
+ 	}
+diff --git a/pkg/virt-handler/vm_test.go b/pkg/virt-handler/vm_test.go
+index 5055100c185b..368f5a120dc6 100644
+--- a/pkg/virt-handler/vm_test.go
++++ b/pkg/virt-handler/vm_test.go
+@@ -2692,6 +2692,19 @@ var _ = Describe("VirtualMachineInstance", func() {
+ 			Expect(condition.Reason).To(Equal(v1.VirtualMachineInstanceReasonSEVNotMigratable))
+ 		})
+ 
++		It("should not be allowed to live-migrate if the VMI uses TDX", func() {
++			vmi := api2.NewMinimalVMI("testvmi")
++			vmi.Spec.Domain.LaunchSecurity = &v1.LaunchSecurity{
++				TDX: &v1.TDX{},
++			}
++
++			condition, isBlockMigration := controller.calculateLiveMigrationCondition(vmi)
++			Expect(isBlockMigration).To(BeFalse())
++			Expect(condition.Type).To(Equal(v1.VirtualMachineInstanceIsMigratable))
++			Expect(condition.Status).To(Equal(k8sv1.ConditionFalse))
++			Expect(condition.Reason).To(Equal(v1.VirtualMachineInstanceReasonTDXNotMigratable))
++		})
++
+ 		It("should not be allowed to live-migrate if the VMI uses SCSI persistent reservation", func() {
+ 			vmi := api2.NewMinimalVMI("testvmi")
+ 
+diff --git a/staging/src/kubevirt.io/api/core/v1/types.go b/staging/src/kubevirt.io/api/core/v1/types.go
+index 14d3580c27f2..a7d136fdd408 100644
+--- a/staging/src/kubevirt.io/api/core/v1/types.go
++++ b/staging/src/kubevirt.io/api/core/v1/types.go
+@@ -511,6 +511,8 @@ const (
+ 	VirtualMachineInstanceReasonHostDeviceNotMigratable = "HostDeviceNotLiveMigratable"
+ 	// Reason means that VMI is not live migratable because it uses Secure Encrypted Virtualization (SEV)
+ 	VirtualMachineInstanceReasonSEVNotMigratable = "SEVNotLiveMigratable"
++	// Reason means that VMI is not live migratable because it uses Intel Trust Domain Extensions (TDX)
++	VirtualMachineInstanceReasonTDXNotMigratable = "TDXNotLiveMigratable"
+ 	// Reason means that VMI is not live migratable because it uses HyperV Reenlightenment while TSC Frequency is not available
+ 	VirtualMachineInstanceReasonNoTSCFrequencyMigratable = "NoTSCFrequencyNotLiveMigratable"
+ 	// Reason means that VMI is not live migratable because it requested SCSI persitent reservation
+-- 
+2.45.0
+

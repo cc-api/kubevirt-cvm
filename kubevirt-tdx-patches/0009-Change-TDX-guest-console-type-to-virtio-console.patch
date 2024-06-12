@@ -1,0 +1,115 @@
+From 03f194f6985ec12277c27c91b53916f68376b03e Mon Sep 17 00:00:00 2001
+From: LeiZhou-97 <lei.zhou@intel.com>
+Date: Mon, 28 Aug 2023 15:30:40 +0800
+Subject: [PATCH 09/18] Change TDX guest console type to virtio console
+
+To harden the guest security, legacy serial console device was filter
+out by the tdx device filter driver in TDX guest. Only virtio console
+(HVC) was allowed in a production TDX guest.
+
+Signed-off-by: LeiZhou-97 <lei.zhou@intel.com>
+---
+ cmd/virt-launcher/BUILD.bazel                 | 11 ++++
+ .../virtwrap/converter/converter.go           | 53 ++++++++++++-------
+ 2 files changed, 45 insertions(+), 19 deletions(-)
+
+diff --git a/cmd/virt-launcher/BUILD.bazel b/cmd/virt-launcher/BUILD.bazel
+index d7586f637342..3a529bd95db5 100644
+--- a/cmd/virt-launcher/BUILD.bazel
++++ b/cmd/virt-launcher/BUILD.bazel
+@@ -163,6 +163,16 @@ pkg_tar(
+     owner = "0.0",
+ )
+ 
++# Workaround for pty console in the rootless container
++pkg_tar(
++    name = "pts-lock-tar",
++    empty_dirs = [
++        "var/lock",
++    ],
++    mode = "0755",
++    owner = "0.0",
++)
++
+ container_image(
+     name = "version-container",
+     directory = "/",
+@@ -180,6 +190,7 @@ container_image(
+             ":passwd-tar",
+             ":nsswitch-tar",
+             ":qemu-kvm-modules-dir-tar",
++            ":pts-lock-tar",
+             "//rpm:launcherbase_x86_64",
+         ],
+     }),
+diff --git a/pkg/virt-launcher/virtwrap/converter/converter.go b/pkg/virt-launcher/virtwrap/converter/converter.go
+index d32bf088f6c1..26afcbe15732 100644
+--- a/pkg/virt-launcher/virtwrap/converter/converter.go
++++ b/pkg/virt-launcher/virtwrap/converter/converter.go
+@@ -1734,29 +1734,44 @@ func Convert_v1_VirtualMachineInstance_To_api_Domain(vmi *v1.VirtualMachineInsta
+ 			Driver: controllerDriver,
+ 		})
+ 
+-		var serialPort uint = 0
+-		var serialType string = "serial"
+-		domain.Spec.Devices.Consoles = []api.Console{
+-			{
+-				Type: "pty",
+-				Target: &api.ConsoleTarget{
+-					Type: &serialType,
+-					Port: &serialPort,
++		if vmi.Spec.Domain.LaunchSecurity == nil || vmi.Spec.Domain.LaunchSecurity.TDX == nil {
++			var serialPort uint = 0
++			var serialType string = "serial"
++			domain.Spec.Devices.Consoles = []api.Console{
++				{
++					Type: "pty",
++					Target: &api.ConsoleTarget{
++						Type: &serialType,
++						Port: &serialPort,
++					},
+ 				},
+-			},
+-		}
++			}
+ 
+-		domain.Spec.Devices.Serials = []api.Serial{
+-			{
+-				Type: "unix",
+-				Target: &api.SerialTarget{
+-					Port: &serialPort,
++			domain.Spec.Devices.Serials = []api.Serial{
++				{
++					Type: "unix",
++					Target: &api.SerialTarget{
++						Port: &serialPort,
++					},
++					Source: &api.SerialSource{
++						Mode: "bind",
++						Path: fmt.Sprintf("/var/run/kubevirt-private/%s/virt-serial%d", vmi.ObjectMeta.UID, serialPort),
++					},
+ 				},
+-				Source: &api.SerialSource{
+-					Mode: "bind",
+-					Path: fmt.Sprintf("/var/run/kubevirt-private/%s/virt-serial%d", vmi.ObjectMeta.UID, serialPort),
++			}
++		} else {
++			// Only virtio console was allowed in TDX guest
++			var consolePort uint = 0
++			var consoleType string = "virtio"
++			domain.Spec.Devices.Consoles = []api.Console{
++				{
++					Type: "pty",
++					Target: &api.ConsoleTarget{
++						Type: &consoleType,
++						Port: &consolePort,
++					},
+ 				},
+-			},
++			}
+ 		}
+ 	}
+ 
+-- 
+2.45.0
+

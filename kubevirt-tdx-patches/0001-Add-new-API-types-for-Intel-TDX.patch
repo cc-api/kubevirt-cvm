@@ -1,0 +1,323 @@
+From 7e6be489f14f93839b96336e6de587157625c3c7 Mon Sep 17 00:00:00 2001
+From: LeiZhou-97 <lei.zhou@intel.com>
+Date: Fri, 14 Jul 2023 13:32:43 +0800
+Subject: [PATCH 01/18] Add new API types for Intel TDX
+
+Introduce new API Intel TDX in launchsecurity object, and also
+add QGS parameter for TDX attestation.
+
+Signed-off-by: LeiZhou-97 <lei.zhou@intel.com>
+---
+ api/api-rule-violations-known.list            |  1 +
+ api/api-rule-violations.list                  |  1 +
+ api/openapi-spec/swagger.json                 | 12 +++++
+ .../components/validations_generated.go       | 50 +++++++++++++++++++
+ .../api/core/v1/deepcopy_generated.go         | 21 ++++++++
+ staging/src/kubevirt.io/api/core/v1/schema.go |  6 +++
+ .../api/core/v1/schema_swagger_generated.go   |  6 +++
+ .../client-go/api/openapi_generated.go        | 27 +++++++++-
+ 8 files changed, 123 insertions(+), 1 deletion(-)
+
+diff --git a/api/api-rule-violations-known.list b/api/api-rule-violations-known.list
+index dd948e528421..90a1ae05ae39 100644
+--- a/api/api-rule-violations-known.list
++++ b/api/api-rule-violations-known.list
+@@ -253,6 +253,7 @@ API rule violation: names_match,kubevirt.io/api/core/v1,LunTarget,ReadOnly
+ API rule violation: names_match,kubevirt.io/api/core/v1,NetworkConfiguration,NetworkInterface
+ API rule violation: names_match,kubevirt.io/api/core/v1,PITTimer,Enabled
+ API rule violation: names_match,kubevirt.io/api/core/v1,RTCTimer,Enabled
++API rule violation: names_match,kubevirt.io/api/core/v1,TDX,QGS
+ API rule violation: names_match,kubevirt.io/api/core/v1,VirtualMachineInstanceFileSystemInfo,Filesystems
+ API rule violation: names_match,kubevirt.io/api/core/v1,VirtualMachineInstanceGuestAgentInfo,GAVersion
+ API rule violation: names_match,kubevirt.io/api/core/v1,VirtualMachineInstanceGuestOSInfo,VersionID
+diff --git a/api/api-rule-violations.list b/api/api-rule-violations.list
+index dd948e528421..90a1ae05ae39 100644
+--- a/api/api-rule-violations.list
++++ b/api/api-rule-violations.list
+@@ -253,6 +253,7 @@ API rule violation: names_match,kubevirt.io/api/core/v1,LunTarget,ReadOnly
+ API rule violation: names_match,kubevirt.io/api/core/v1,NetworkConfiguration,NetworkInterface
+ API rule violation: names_match,kubevirt.io/api/core/v1,PITTimer,Enabled
+ API rule violation: names_match,kubevirt.io/api/core/v1,RTCTimer,Enabled
++API rule violation: names_match,kubevirt.io/api/core/v1,TDX,QGS
+ API rule violation: names_match,kubevirt.io/api/core/v1,VirtualMachineInstanceFileSystemInfo,Filesystems
+ API rule violation: names_match,kubevirt.io/api/core/v1,VirtualMachineInstanceGuestAgentInfo,GAVersion
+ API rule violation: names_match,kubevirt.io/api/core/v1,VirtualMachineInstanceGuestOSInfo,VersionID
+diff --git a/api/openapi-spec/swagger.json b/api/openapi-spec/swagger.json
+index 9394491421d5..fd11a5db7a10 100644
+--- a/api/openapi-spec/swagger.json
++++ b/api/openapi-spec/swagger.json
+@@ -17708,6 +17708,9 @@
+      "sev": {
+       "description": "AMD Secure Encrypted Virtualization (SEV).",
+       "$ref": "#/definitions/v1.SEV"
++     },
++     "tdx": {
++      "$ref": "#/definitions/v1.TDX"
+      }
+     }
+    },
+@@ -18750,6 +18753,15 @@
+      }
+     }
+    },
++   "v1.TDX": {
++    "type": "object",
++    "properties": {
++     "QGS": {
++      "description": "TDVMCALL for Quote Generation Service connection",
++      "type": "string"
++     }
++    }
++   },
+    "v1.TLSConfiguration": {
+     "description": "TLSConfiguration holds TLS options",
+     "type": "object",
+diff --git a/pkg/virt-operator/resource/generate/components/validations_generated.go b/pkg/virt-operator/resource/generate/components/validations_generated.go
+index b28062b00e0a..7895198ce001 100644
+--- a/pkg/virt-operator/resource/generate/components/validations_generated.go
++++ b/pkg/virt-operator/resource/generate/components/validations_generated.go
+@@ -6285,6 +6285,12 @@ var CRDsValidation map[string]string = map[string]string{
+                                   type: boolean
+                               type: object
+                           type: object
++                        tdx:
++                          properties:
++                            QGS:
++                              description: TDVMCALL for Quote Generation Service connection
++                              type: string
++                          type: object
+                       type: object
+                     machine:
+                       description: Machine type.
+@@ -8003,6 +8009,12 @@ var CRDsValidation map[string]string = map[string]string{
+                       type: boolean
+                   type: object
+               type: object
++            tdx:
++              properties:
++                QGS:
++                  description: TDVMCALL for Quote Generation Service connection
++                  type: string
++              type: object
+           type: object
+         memory:
+           description: Required Memory related attributes of the instancetype.
+@@ -10720,6 +10732,12 @@ var CRDsValidation map[string]string = map[string]string{
+                           type: boolean
+                       type: object
+                   type: object
++                tdx:
++                  properties:
++                    QGS:
++                      description: TDVMCALL for Quote Generation Service connection
++                      type: string
++                  type: object
+               type: object
+             machine:
+               description: Machine type.
+@@ -13371,6 +13389,12 @@ var CRDsValidation map[string]string = map[string]string{
+                           type: boolean
+                       type: object
+                   type: object
++                tdx:
++                  properties:
++                    QGS:
++                      description: TDVMCALL for Quote Generation Service connection
++                      type: string
++                  type: object
+               type: object
+             machine:
+               description: Machine type.
+@@ -15536,6 +15560,12 @@ var CRDsValidation map[string]string = map[string]string{
+                                   type: boolean
+                               type: object
+                           type: object
++                        tdx:
++                          properties:
++                            QGS:
++                              description: TDVMCALL for Quote Generation Service connection
++                              type: string
++                          type: object
+                       type: object
+                     machine:
+                       description: Machine type.
+@@ -16765,6 +16795,12 @@ var CRDsValidation map[string]string = map[string]string{
+                       type: boolean
+                   type: object
+               type: object
++            tdx:
++              properties:
++                QGS:
++                  description: TDVMCALL for Quote Generation Service connection
++                  type: string
++              type: object
+           type: object
+         memory:
+           description: Required Memory related attributes of the instancetype.
+@@ -19828,6 +19864,13 @@ var CRDsValidation map[string]string = map[string]string{
+                                           type: boolean
+                                       type: object
+                                   type: object
++                                tdx:
++                                  properties:
++                                    QGS:
++                                      description: TDVMCALL for Quote Generation Service
++                                        connection
++                                      type: string
++                                  type: object
+                               type: object
+                             machine:
+                               description: Machine type.
+@@ -24910,6 +24953,13 @@ var CRDsValidation map[string]string = map[string]string{
+                                               type: boolean
+                                           type: object
+                                       type: object
++                                    tdx:
++                                      properties:
++                                        QGS:
++                                          description: TDVMCALL for Quote Generation
++                                            Service connection
++                                          type: string
++                                      type: object
+                                   type: object
+                                 machine:
+                                   description: Machine type.
+diff --git a/staging/src/kubevirt.io/api/core/v1/deepcopy_generated.go b/staging/src/kubevirt.io/api/core/v1/deepcopy_generated.go
+index acaa7cb79f6b..a206fd8cc474 100644
+--- a/staging/src/kubevirt.io/api/core/v1/deepcopy_generated.go
++++ b/staging/src/kubevirt.io/api/core/v1/deepcopy_generated.go
+@@ -2592,6 +2592,11 @@ func (in *LaunchSecurity) DeepCopyInto(out *LaunchSecurity) {
+ 		*out = new(SEV)
+ 		(*in).DeepCopyInto(*out)
+ 	}
++	if in.TDX != nil {
++		in, out := &in.TDX, &out.TDX
++		*out = new(TDX)
++		**out = **in
++	}
+ 	return
+ }
+ 
+@@ -3924,6 +3929,22 @@ func (in *SysprepSource) DeepCopy() *SysprepSource {
+ 	return out
+ }
+ 
++// DeepCopyInto is an autogenerated deepcopy function, copying the receiver, writing into out. in must be non-nil.
++func (in *TDX) DeepCopyInto(out *TDX) {
++	*out = *in
++	return
++}
++
++// DeepCopy is an autogenerated deepcopy function, copying the receiver, creating a new TDX.
++func (in *TDX) DeepCopy() *TDX {
++	if in == nil {
++		return nil
++	}
++	out := new(TDX)
++	in.DeepCopyInto(out)
++	return out
++}
++
+ // DeepCopyInto is an autogenerated deepcopy function, copying the receiver, writing into out. in must be non-nil.
+ func (in *TLSConfiguration) DeepCopyInto(out *TLSConfiguration) {
+ 	*out = *in
+diff --git a/staging/src/kubevirt.io/api/core/v1/schema.go b/staging/src/kubevirt.io/api/core/v1/schema.go
+index 8c0fde6faa0a..2f9ba45f9d26 100644
+--- a/staging/src/kubevirt.io/api/core/v1/schema.go
++++ b/staging/src/kubevirt.io/api/core/v1/schema.go
+@@ -656,6 +656,7 @@ type DiskTarget struct {
+ type LaunchSecurity struct {
+ 	// AMD Secure Encrypted Virtualization (SEV).
+ 	SEV *SEV `json:"sev,omitempty"`
++	TDX *TDX `json:"tdx,omitempty"`
+ }
+ 
+ type SEV struct {
+@@ -664,6 +665,11 @@ type SEV struct {
+ 	Policy *SEVPolicy `json:"policy,omitempty"`
+ }
+ 
++type TDX struct {
++	// TDVMCALL for Quote Generation Service connection
++	QGS string `json:"QGS,omitempty"`
++}
++
+ type SEVPolicy struct {
+ 	// SEV-ES is required.
+ 	// Defaults to false.
+diff --git a/staging/src/kubevirt.io/api/core/v1/schema_swagger_generated.go b/staging/src/kubevirt.io/api/core/v1/schema_swagger_generated.go
+index 3de068bc1d83..4b9b1a1ea669 100644
+--- a/staging/src/kubevirt.io/api/core/v1/schema_swagger_generated.go
++++ b/staging/src/kubevirt.io/api/core/v1/schema_swagger_generated.go
+@@ -371,6 +371,12 @@ func (SEV) SwaggerDoc() map[string]string {
+ 	}
+ }
+ 
++func (TDX) SwaggerDoc() map[string]string {
++	return map[string]string{
++		"QGS": "TDVMCALL for Quote Generation Service connection",
++	}
++}
++
+ func (SEVPolicy) SwaggerDoc() map[string]string {
+ 	return map[string]string{
+ 		"encryptedState": "SEV-ES is required.\nDefaults to false.\n+optional",
+diff --git a/staging/src/kubevirt.io/client-go/api/openapi_generated.go b/staging/src/kubevirt.io/client-go/api/openapi_generated.go
+index 29e4d342233d..9e18d1ffa213 100644
+--- a/staging/src/kubevirt.io/client-go/api/openapi_generated.go
++++ b/staging/src/kubevirt.io/client-go/api/openapi_generated.go
+@@ -465,6 +465,7 @@ func GetOpenAPIDefinitions(ref common.ReferenceCallback) map[string]common.OpenA
+ 		"kubevirt.io/api/core/v1.SupportContainerResources":                                          schema_kubevirtio_api_core_v1_SupportContainerResources(ref),
+ 		"kubevirt.io/api/core/v1.SyNICTimer":                                                         schema_kubevirtio_api_core_v1_SyNICTimer(ref),
+ 		"kubevirt.io/api/core/v1.SysprepSource":                                                      schema_kubevirtio_api_core_v1_SysprepSource(ref),
++		"kubevirt.io/api/core/v1.TDX":                                                                schema_kubevirtio_api_core_v1_TDX(ref),
+ 		"kubevirt.io/api/core/v1.TLSConfiguration":                                                   schema_kubevirtio_api_core_v1_TLSConfiguration(ref),
+ 		"kubevirt.io/api/core/v1.TPMDevice":                                                          schema_kubevirtio_api_core_v1_TPMDevice(ref),
+ 		"kubevirt.io/api/core/v1.Timer":                                                              schema_kubevirtio_api_core_v1_Timer(ref),
+@@ -19484,11 +19485,16 @@ func schema_kubevirtio_api_core_v1_LaunchSecurity(ref common.ReferenceCallback)
+ 							Ref:         ref("kubevirt.io/api/core/v1.SEV"),
+ 						},
+ 					},
++					"tdx": {
++						SchemaProps: spec.SchemaProps{
++							Ref: ref("kubevirt.io/api/core/v1.TDX"),
++						},
++					},
+ 				},
+ 			},
+ 		},
+ 		Dependencies: []string{
+-			"kubevirt.io/api/core/v1.SEV"},
++			"kubevirt.io/api/core/v1.SEV", "kubevirt.io/api/core/v1.TDX"},
+ 	}
+ }
+ 
+@@ -21542,6 +21548,25 @@ func schema_kubevirtio_api_core_v1_SysprepSource(ref common.ReferenceCallback) c
+ 	}
+ }
+ 
++func schema_kubevirtio_api_core_v1_TDX(ref common.ReferenceCallback) common.OpenAPIDefinition {
++	return common.OpenAPIDefinition{
++		Schema: spec.Schema{
++			SchemaProps: spec.SchemaProps{
++				Type: []string{"object"},
++				Properties: map[string]spec.Schema{
++					"QGS": {
++						SchemaProps: spec.SchemaProps{
++							Description: "TDVMCALL for Quote Generation Service connection",
++							Type:        []string{"string"},
++							Format:      "",
++						},
++					},
++				},
++			},
++		},
++	}
++}
++
+ func schema_kubevirtio_api_core_v1_TLSConfiguration(ref common.ReferenceCallback) common.OpenAPIDefinition {
+ 	return common.OpenAPIDefinition{
+ 		Schema: spec.Schema{
+-- 
+2.45.0
+

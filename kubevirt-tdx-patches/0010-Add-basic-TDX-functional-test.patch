@@ -1,0 +1,153 @@
+From 5821e194894a855f38e8e247592fe6ff8fd5776d Mon Sep 17 00:00:00 2001
+From: LeiZhou-97 <lei.zhou@intel.com>
+Date: Mon, 28 Aug 2023 17:04:08 +0800
+Subject: [PATCH 10/18] Add basic TDX functional test
+
+The test verifies that a TDX VM can be started and the system log
+contains an entry that TDX guest is initialized.
+
+Signed-off-by: LeiZhou-97 <lei.zhou@intel.com>
+---
+ tests/framework/checks/checks.go | 10 +++++++
+ tests/framework/checks/skips.go  | 13 +++++++++
+ tests/launchsecurity/BUILD.bazel |  5 +++-
+ tests/launchsecurity/tdx.go      | 45 ++++++++++++++++++++++++++++++++
+ tests/libvmi/vmi.go              |  9 +++++++
+ 5 files changed, 81 insertions(+), 1 deletion(-)
+ create mode 100644 tests/launchsecurity/tdx.go
+
+diff --git a/tests/framework/checks/checks.go b/tests/framework/checks/checks.go
+index fdc18f5143c0..5b3f13f4c96e 100644
+--- a/tests/framework/checks/checks.go
++++ b/tests/framework/checks/checks.go
+@@ -76,6 +76,16 @@ func IsSEVCapable(node *v1.Node, sevLabel string) bool {
+ 	return false
+ }
+ 
++func IsTDXCapable(node *v1.Node) bool {
++	gomega.Expect(node).ToNot(gomega.BeNil())
++	for label, _ := range node.Labels {
++		if label == v12.TDXLabel {
++			return true
++		}
++	}
++	return false
++}
++
+ func IsARM64(arch string) bool {
+ 	return arch == "arm64"
+ }
+diff --git a/tests/framework/checks/skips.go b/tests/framework/checks/skips.go
+index 7706d55144b3..e88e36245f32 100644
+--- a/tests/framework/checks/skips.go
++++ b/tests/framework/checks/skips.go
+@@ -139,6 +139,19 @@ func SkipTestIfNotSEVESCapable() {
+ 	ginkgo.Skip("no node capable of running SEV-ES workloads detected", 1)
+ }
+ 
++func SkipTestIfNotTDXCapable() {
++	virtClient, err := kubecli.GetKubevirtClient()
++	util.PanicOnError(err)
++	nodes := libnode.GetAllSchedulableNodes(virtClient)
++
++	for _, node := range nodes.Items {
++		if IsTDXCapable(&node) {
++			return
++		}
++	}
++	ginkgo.Skip("no node capable of running TDX workloads detected", 1)
++}
++
+ func SkipIfNonRoot(feature string) {
+ 	if HasFeature(virtconfig.NonRoot) {
+ 		ginkgo.Skip(fmt.Sprintf("NonRoot implementation doesn't support %s", feature))
+diff --git a/tests/launchsecurity/BUILD.bazel b/tests/launchsecurity/BUILD.bazel
+index 7b2dc491e9ba..8575e0de94b6 100644
+--- a/tests/launchsecurity/BUILD.bazel
++++ b/tests/launchsecurity/BUILD.bazel
+@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
+ 
+ go_library(
+     name = "go_default_library",
+-    srcs = ["sev.go"],
++    srcs = [
++        "sev.go",
++        "tdx.go",
++    ],
+     importpath = "kubevirt.io/kubevirt/tests/launchsecurity",
+     visibility = ["//visibility:public"],
+     deps = [
+diff --git a/tests/launchsecurity/tdx.go b/tests/launchsecurity/tdx.go
+new file mode 100644
+index 000000000000..780ee766d8b0
+--- /dev/null
++++ b/tests/launchsecurity/tdx.go
+@@ -0,0 +1,45 @@
++package launchsecurity
++
++import (
++	expect "github.com/google/goexpect"
++	. "github.com/onsi/ginkgo/v2"
++	. "github.com/onsi/gomega"
++
++	virtconfig "kubevirt.io/kubevirt/pkg/virt-config"
++	"kubevirt.io/kubevirt/tests"
++	"kubevirt.io/kubevirt/tests/console"
++	"kubevirt.io/kubevirt/tests/framework/checks"
++	"kubevirt.io/kubevirt/tests/libvmi"
++)
++
++var _ = Describe("[sig-compute]Intel Trust Domain Extensions (TDX)", func() {
++	BeforeEach(func() {
++		checks.SkipTestIfNoFeatureGate(virtconfig.WorkloadEncryptionTDX)
++	})
++
++	Context("lifecycle", func() {
++		BeforeEach(func() {
++			checks.SkipTestIfNotTDXCapable()
++		})
++
++		It("should start a TDX VM", func() {
++			const secureBoot = false
++			vmi := libvmi.NewFedora(libvmi.WithUefi(secureBoot), libvmi.WithTDX())
++			vmi = tests.RunVMIAndExpectLaunch(vmi, 240)
++
++			By("Expecting the VirtualMachineInstance console")
++			Expect(console.LoginToFedora(vmi)).To(Succeed())
++
++			By("Verifying that TDX is enabled in the guest")
++			err := console.SafeExpectBatch(vmi, []expect.Batcher{
++				&expect.BSnd{S: "\n"},
++				&expect.BExp{R: console.PromptExpression},
++				&expect.BSnd{S: "dmesg | grep --color=never tdx\n"},
++				&expect.BExp{R: "tdx: Guest initialized"},
++				&expect.BSnd{S: "\n"},
++				&expect.BExp{R: console.PromptExpression},
++			}, 30)
++			Expect(err).ToNot(HaveOccurred())
++		})
++	})
++})
+diff --git a/tests/libvmi/vmi.go b/tests/libvmi/vmi.go
+index 57b75de07209..5d232bb527d7 100644
+--- a/tests/libvmi/vmi.go
++++ b/tests/libvmi/vmi.go
+@@ -181,6 +181,15 @@ func WithSEV(isESEnabled bool) Option {
+ 	}
+ }
+ 
++// WithTDX adds `launchSecurity` with `tdx`.
++func WithTDX() Option {
++	return func(vmi *v1.VirtualMachineInstance) {
++		vmi.Spec.Domain.LaunchSecurity = &v1.LaunchSecurity{
++			TDX: &v1.TDX{},
++		}
++	}
++}
++
+ func WithCPUFeature(featureName, policy string) Option {
+ 	return func(vmi *v1.VirtualMachineInstance) {
+ 		if vmi.Spec.Domain.CPU == nil {
+-- 
+2.45.0
+

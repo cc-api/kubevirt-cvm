@@ -1,0 +1,36 @@
+From 6db945e9eea5d55b23f8a6223e6f78f0bf105227 Mon Sep 17 00:00:00 2001
+From: LeiZhou-97 <lei.zhou@intel.com>
+Date: Tue, 29 Aug 2023 17:00:10 +0800
+Subject: [PATCH 12/18] Config private memfd host memory backend for TDX VM
+
+"memory-backend-memfd" provides host memory with linux memfd_create API
+but differs in that "memfd-private" will have two memfds, one is for share
+memory which can be mmaped, the other is for private memory which is
+restricted memfd and can not be accessed from userspace.
+
+Signed-off-by: LeiZhou-97 <lei.zhou@intel.com>
+---
+ pkg/virt-launcher/virtwrap/converter/converter.go | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/pkg/virt-launcher/virtwrap/converter/converter.go b/pkg/virt-launcher/virtwrap/converter/converter.go
+index b9aa491f1048..a14e780ff1ac 100644
+--- a/pkg/virt-launcher/virtwrap/converter/converter.go
++++ b/pkg/virt-launcher/virtwrap/converter/converter.go
+@@ -1446,6 +1446,13 @@ func Convert_v1_VirtualMachineInstance_To_api_Domain(vmi *v1.VirtualMachineInsta
+ 		}
+ 	}
+ 
++	if c.UseLaunchSecurityTDX {
++		if domain.Spec.MemoryBacking == nil {
++			domain.Spec.MemoryBacking = &api.MemoryBacking{}
++		}
++		domain.Spec.MemoryBacking.Source = &api.MemoryBackingSource{Type: "memfd-private"}
++	}
++
+ 	volumeIndices := map[string]int{}
+ 	volumes := map[string]*v1.Volume{}
+ 	for i, volume := range vmi.Spec.Volumes {
+-- 
+2.45.0
+

@@ -1,0 +1,45 @@
+From 5917c1aceca9fdf1dffb4ebf6e9f19751bcd9fef Mon Sep 17 00:00:00 2001
+From: LeiZhou-97 <lei.zhou@intel.com>
+Date: Wed, 30 Aug 2023 14:57:34 +0800
+Subject: [PATCH 14/18] Add tdvmcall support for TDVM
+
+TDVM has two approach to do attestation, vsock and tdvmcall.
+Using tdvmcall needs to set the paramater <Quote-Generation-Service>
+in libvirt domain xml.
+
+Signed-off-by: LeiZhou-97 <lei.zhou@intel.com>
+---
+ pkg/virt-launcher/virtwrap/api/schema.go          | 1 +
+ pkg/virt-launcher/virtwrap/converter/converter.go | 4 ++++
+ 2 files changed, 5 insertions(+)
+
+diff --git a/pkg/virt-launcher/virtwrap/api/schema.go b/pkg/virt-launcher/virtwrap/api/schema.go
+index 19eddb33130a..48f869a9ee7a 100644
+--- a/pkg/virt-launcher/virtwrap/api/schema.go
++++ b/pkg/virt-launcher/virtwrap/api/schema.go
+@@ -949,6 +949,7 @@ type LaunchSecurity struct {
+ 	Cbitpos         string `xml:"cbitpos,omitempty"`
+ 	ReducedPhysBits string `xml:"reducedPhysBits,omitempty"`
+ 	Policy          string `xml:"policy,omitempty"`
++	QGS             string `xml:"Quote-Generation-Service,omitempty"`
+ }
+ 
+ //END LaunchSecurity --------------------
+diff --git a/pkg/virt-launcher/virtwrap/converter/converter.go b/pkg/virt-launcher/virtwrap/converter/converter.go
+index 202b17c3080b..9d3cc0002563 100644
+--- a/pkg/virt-launcher/virtwrap/converter/converter.go
++++ b/pkg/virt-launcher/virtwrap/converter/converter.go
+@@ -1353,6 +1353,10 @@ func Convert_v1_VirtualMachineInstance_To_api_Domain(vmi *v1.VirtualMachineInsta
+ 			Type:   "tdx",
+ 			Policy: launchsecurity.TDXPolicy(), // Always set TDX NoDebug policy
+ 		}
++		// Set TDVMCALL parameter
++		if vmi.Spec.Domain.LaunchSecurity.TDX.QGS != "" {
++			domain.Spec.LaunchSecurity.QGS = vmi.Spec.Domain.LaunchSecurity.TDX.QGS
++		}
+ 	}
+ 	if c.SMBios != nil {
+ 		domain.Spec.SysInfo.System = append(domain.Spec.SysInfo.System,
+-- 
+2.45.0
+
