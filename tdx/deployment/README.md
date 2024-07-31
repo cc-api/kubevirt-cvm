@@ -2,7 +2,7 @@
 
 This deployment guide shows how to boot Intel TDX guest (TD) with KubeVirt. The TD runs in Kubernetes and managed by KubeVirt.
 
-It supports to deploy on Ubuntu 24.04 and Ubuntu 23.10. The follows will use Ubuntu 24.04.
+It supports to deploy on Ubuntu 23.10 host. The follows will use Ubuntu 23.10 host and guest.
 
 ## Prerequisite
 
