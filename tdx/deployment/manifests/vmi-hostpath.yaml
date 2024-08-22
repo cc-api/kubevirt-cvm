@@ -8,8 +8,7 @@ metadata:
 spec:
   domain:
     launchSecurity:
-      tdx:
-        QGS: vsock:2:4050
+      tdx: {}
     clock:
       timer:
         hpet:
