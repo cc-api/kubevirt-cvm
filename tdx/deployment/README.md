@@ -18,8 +18,13 @@ It supports to deploy on Ubuntu 23.10 host. The follows will use Ubuntu 23.10 ho
 
 ## Install KubeVirt
 
-```
+```bash
+# ubuntu 23.10
 kubectl create -f ./manifests/kubevirt-operator.yaml
+kubectl create -f ./manifests/kubevirt-cr.yaml
+
+# centos stream 9
+kubectl create -f ./manifests/kubevirt-operator-centos.yaml
 kubectl create -f ./manifests/kubevirt-cr.yaml
 ```
 
@@ -32,7 +37,9 @@ Check the kubevirt components `virt-api`, `virt-controller`, `virt-handler` if a
 
 ## Prepare CVM image
 
-1. Follow [guide](https://github.com/canonical/tdx/tree/mantic-23.10?tab=readme-ov-file#5-setup-td-guest) to create a TDX guest image.
+1. Fetch guest image
+    - CentOS Stream 9: Download the Red Hat Enterprise Linux 9.4 KVM Guest Image.
+    - Ubuntu 23.10: Follow [guide](https://github.com/canonical/tdx/tree/mantic-23.10?tab=readme-ov-file#5-setup-td-guest) to create a TDX guest image.
 2. Convert the image to raw format. The image will be used in the next step.
 
     ```
